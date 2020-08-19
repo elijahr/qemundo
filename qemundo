@@ -313,7 +313,7 @@ usage () {
   echo "    -a/--arch <arch>      Emulate this architecture. (default: ${DEFAULT_ARCH})"
   echo "    -s/--size <size>      The size of the disk image. (default: ${DEFAULT_SIZE})"
   echo "    -m/--memory <memory>  The amount of memory to allocate. (default: ${DEFAULT_MEMORY})"
-  echo "    -p/--cpus <size>      The number of processors. (default: ${DEFAULT_CPUS})"
+  echo "    -p/--cpus <count>     The number of processors. (default: ${DEFAULT_CPUS})"
   echo
   echo "  clean                   Remove all cached ISOs and images."
   echo "  list                    Print supported build targets and exit."

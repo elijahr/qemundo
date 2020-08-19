@@ -51,7 +51,7 @@ Usage: qemundo COMMAND [OPTIONS]
     -a/--arch <arch>      Emulate this architecture. (default: arm64)
     -s/--size <size>      The size of the disk image. (default: 5G)
     -m/--memory <memory>  The amount of memory to allocate. (default: 512M)
-    -p/--cpus <size>      The number of processors. (default: host nproc)
+    -p/--cpus <count>     The number of processors. (default: host nproc)
 
   clean                   Remove all cached ISOs and images.
   list                    Print supported build targets and exit.
