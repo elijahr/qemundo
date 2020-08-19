@@ -308,7 +308,7 @@ usage () {
   echo
   echo "Usage: ${ME} COMMAND [OPTIONS]"
   echo
-  echo "  install <path>          Create a new virtual machine at path (default: <os>-<arch>).."
+  echo "  install [path]          Create a new virtual machine at path (default: <os>-<arch>).."
   echo "    -o/--os <os>          Install this operating system. (default: ${DEFAULT_OS})"
   echo "    -a/--arch <arch>      Emulate this architecture. (default: ${DEFAULT_ARCH})"
   echo "    -s/--size <size>      The size of the disk image. (default: ${DEFAULT_SIZE})"
