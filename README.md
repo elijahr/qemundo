@@ -4,18 +4,18 @@ Easy virtual machine manager for QEMU.
 
 ## Rationale
 
-QEMU is a powerful tool, but configuring it can be kind of a pain.
-Many parameters are needed for a usable machine with networking, etc. qemundo
-configures the VM and spits out a simple `run.sh`, ready to boot. If you need to
-customize networking, graphics, etc, after your machine is created, just edit
-`run.sh`.
+QEMU is a powerful tool, but configuration can be a pain.
+Many parameters are needed for a basic machine with networking, etc. qemundo
+configures the VM and spits out a simple `run.sh` command, ready to boot. Edit
+`run.sh` as needed for additional configuration.
 
 Currently supports the following guests:
 
 * netbsd-9-arm64
 * ubuntu-bionic-arm64
+* alpine-3-arm64
 
-Pull requests for additional targets are welcome!
+Pull requests for additional guests are welcome.
 
 ## Examples
 
