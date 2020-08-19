@@ -4,15 +4,16 @@
 #
 # Usage: qemundo COMMAND [OPTIONS]
 #
-#   install <path>          Create a new virtual machine.
-#     -a/--arch <arch>      Emulate this architecture. (arm64)
-#     -o/--os <os>          Install this operating system. (netbsd-9)
-#     -s/--size <size>      The size of the disk image. (5G)
-#     -m/--memory <memory>  The amount of memory to allocate. (512M)
-#     -p/--cpus <size>      The number of processors. (8)
+#   install [path]          Create a new virtual machine at path (default: <os>-<arch>)..
+#     -o/--os <os>          Install this operating system (default: netbsd-9)
+#     -a/--arch <arch>      Emulate this architecture (default: arm64)
+#     -s/--size <size>      The size of the disk image (default: 5G)
+#     -m/--memory <memory>  The amount of memory to allocate (default: 512M)
+#     -p/--cpus <count>     The number of processors (default: output of nproc)
 #
-#   list                    Print supported build targets.
-#   help                    Print this help message and exit.
+#   clean                   Remove all cached ISOs and images
+#   list                    Print supported build targets and exit
+#   help                    Print this help message and exit
 #
 # Copyright (c) 2020 Elijah Shaw-Rutschman
 #
@@ -313,15 +314,15 @@ usage () {
   echo "Usage: ${ME} COMMAND [OPTIONS]"
   echo
   echo "  install [path]          Create a new virtual machine at path (default: <os>-<arch>).."
-  echo "    -o/--os <os>          Install this operating system. (default: ${DEFAULT_OS})"
-  echo "    -a/--arch <arch>      Emulate this architecture. (default: ${DEFAULT_ARCH})"
-  echo "    -s/--size <size>      The size of the disk image. (default: ${DEFAULT_SIZE})"
-  echo "    -m/--memory <memory>  The amount of memory to allocate. (default: ${DEFAULT_MEMORY})"
-  echo "    -p/--cpus <count>     The number of processors. (default: ${DEFAULT_CPUS})"
+  echo "    -o/--os <os>          Install this operating system (default: ${DEFAULT_OS})"
+  echo "    -a/--arch <arch>      Emulate this architecture (default: ${DEFAULT_ARCH})"
+  echo "    -s/--size <size>      The size of the disk image (default: ${DEFAULT_SIZE})"
+  echo "    -m/--memory <memory>  The amount of memory to allocate (default: ${DEFAULT_MEMORY})"
+  echo "    -p/--cpus <count>     The number of processors (default: ${DEFAULT_CPUS})"
   echo
-  echo "  clean                   Remove all cached ISOs and images."
-  echo "  list                    Print supported build targets and exit."
-  echo "  help                    Print this help message and exit."
+  echo "  clean                   Remove all cached ISOs and images"
+  echo "  list                    Print supported build targets and exit"
+  echo "  help                    Print this help message and exit"
   echo
 }
 
