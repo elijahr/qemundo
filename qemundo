@@ -48,27 +48,16 @@ DEFAULT_MEMORY=512M
 DEFAULT_CPUS=`nproc`
 
 install () {
-  validate_guest
+  prepare_install
 
   case $ARCH in
     arm64 )
-      prepare_dirs
-      install_qemu_system_aarch64
-      configure_arm64
-      copy_arm64_firmware
-
-      if [ "${ISO_URL}" != "" ]; then
-        install_iso
-      else
-        if [ "${GZ_IMG_URL}" != "" ]; then
-          install_gz_img
-        else
-          fail "Bug in qemundo: nothing to download."
-        fi
-      fi
-      write_run_sh
+      prepare_arm64
+      build_image
+      write_arm64_run_sh
       ;;
   esac
+
   echo
   echo "Created VM at ${BUILD}"
   echo "Run this VM with:"
@@ -77,7 +66,29 @@ install () {
   echo
 }
 
-prepare_dirs () {
+prepare_install () {
+  # Validate guest
+  case "${OS}" in
+    netbsd-9|ubuntu-bionic|alpine-3 )
+      ;;
+    * )
+      echo
+      echo "Unsupported operating system ${OS}"
+      supported_guests
+      exit 1
+      ;;
+  esac
+  case "${ARCH}" in
+    arm64 )
+      ;;
+    * )
+      echo
+      echo "Unsupported architecture ${ARCH}"
+      supported_guests
+      exit 1
+      ;;
+  esac
+
   if [ -d "${BUILD}" ]; then
     read -p "Existing machine in ${BUILD} will be overwritten. Are you sure? [y/N] " -n 1 -r
     echo
@@ -96,7 +107,62 @@ prepare_dirs () {
   echo "Creating virtual machine ${NAME}"
 }
 
-install_qemu_system_aarch64 () {
+build_image () {
+  if [ "${ISO_URL}" != "" ]; then
+    boot_iso
+  elif [ "${GZ_IMG_URL}" != "" ]; then
+    copy_gz_img
+  else
+    fail "Bug in qemundo: nothing to download."
+  fi
+}
+
+boot_iso () {
+  ISO="${CACHE}/${OS}-${ARCH}.iso"
+  if [ ! -f "${ISO}" ]; then
+    echo "Fetching ${OS} ISO..."
+    mkdir -p ~/.cache/qemundo
+    curl "${ISO_URL}" -Lf > "${ISO}"
+  else
+    echo "Using cached ISO"
+  fi
+
+  echo "Creating blank ${SIZE} disk image..."
+  qemu-img create -f raw "${BUILD}/${OS}-${ARCH}.img" "${SIZE}" >/dev/null 2>&1
+
+  echo "Booting from ISO..."
+  qemu-system-aarch64 \
+    -nographic \
+    -machine "${MACHINE}" \
+    -m "${MEMORY}" \
+    -cpu "${CPU}" \
+    -smp "${CPUS}" \
+    -netdev user,id=vnet,hostfwd=:127.0.0.1:0-:22 \
+    -device virtio-net-pci,netdev=vnet \
+    -drive file="${BUILD}/${OS}-${ARCH}.img,if=none,id=drive0,cache=writeback" \
+    -device virtio-blk,drive=drive0,bootindex=0 \
+    -drive file="${ISO},if=none,id=drive1,cache=writeback" \
+    -device virtio-blk,drive=drive1,bootindex=1 \
+    -drive file="${BUILD}/pflash.img,format=raw,if=pflash"
+}
+
+copy_gz_img () {
+  GZ_IMG="${CACHE}/${OS}-${ARCH}.img.gz"
+  if [ ! -f "${GZ_IMG}" ]; then
+    echo "Fetching ${OS}-${ARCH} image..."
+    curl "${GZ_IMG_URL}" -Lf > "${GZ_IMG}"
+  else
+    echo "Using cached ${OS}-${ARCH} image"
+  fi
+
+  IMG="${BUILD}/${OS}-${ARCH}.img"
+  gunzip --stdout "${GZ_IMG}" > "${IMG}"
+
+  echo "Resizing image to ${SIZE}..."
+  qemu-img resize -f raw "${IMG}" "${SIZE}"
+}
+
+prepare_arm64 () {
   # Ensure qemu-system-aarch64 is installed
   if ! command -v qemu-system-aarch64 &> /dev/null
   then
@@ -117,83 +183,23 @@ install_qemu_system_aarch64 () {
       fail "qemu-system-aarch64 not found. Install qemu."
     fi
   fi
-}
 
-install_iso () {
-  echo "Creating blank ${SIZE} disk image..."
-  qemu-img create -f raw "${BUILD}/${OS}-${ARCH}.img" "${SIZE}" >/dev/null 2>&1
-
-  ISO="${CACHE}/${OS}-${ARCH}.iso"
-  if [ ! -f "${ISO}" ]; then
-    echo "Fetching ${OS} ISO..."
-    mkdir -p ~/.cache/qemundo
-    curl "${ISO_URL}" -Lf > "${ISO}"
-  else
-    echo "Using cached ISO"
-  fi
-
-  echo "Verifying ISO..."
-  SUM=`sha256sum "${ISO}" | cut -f1 -d " "`
-  test "${SUM}" == "${SHA256}" || fail "ISO checksum did not match: '${SUM}' != '${SHA256}'"
-
-  echo "Booting from ISO..."
-  qemu-system-aarch64 \
-    -nographic \
-    -machine "${MACHINE}" \
-    -m "${MEMORY}" \
-    -cpu "${CPU}" \
-    -smp "${CPUS}" \
-    -netdev user,id=vnet,hostfwd=:127.0.0.1:0-:22 \
-    -device virtio-net-pci,netdev=vnet \
-    -drive file="${BUILD}/${OS}-${ARCH}.img,if=none,id=drive0,cache=writeback" \
-    -device virtio-blk,drive=drive0,bootindex=0 \
-    -drive file="${ISO},if=none,id=drive1,cache=writeback" \
-    -device virtio-blk,drive=drive1,bootindex=1 \
-    -drive file="${BUILD}/pflash.img,format=raw,if=pflash"
-}
-
-install_gz_img () {
-  GZ_IMG="${CACHE}/${OS}-${ARCH}.img.gz"
-  if [ ! -f "${GZ_IMG}" ]; then
-    echo "Fetching ${OS}-${ARCH} image..."
-    curl "${GZ_IMG_URL}" -Lf > "${GZ_IMG}"
-  else
-    echo "Using cached ${OS}-${ARCH} image"
-  fi
-
-  echo "Verifying image..."
-  SUM=`sha256sum "${GZ_IMG}" | cut -f1 -d " "`
-  test "${SUM}" == "${SHA256}" || fail "Image checksum did not match: '${SUM}' != '${SHA256}'"
-
-  IMG="${BUILD}/${OS}-${ARCH}.img"
-  gunzip --stdout "${GZ_IMG}" > "${IMG}"
-
-  echo "Resizing image to ${SIZE}..."
-  qemu-img resize -f raw "${IMG}" "${SIZE}"
-}
-
-configure_arm64 () {
   CPU=max
   MACHINE=virt,gic-version=max
   case $OS in
     ubuntu-bionic )
-      SHA256=015c2e34cc950b78682b772e9197164a144a565e112660d1183825ead80005cc
       ISO_URL=http://ports.ubuntu.com/ubuntu-ports/dists/bionic-updates/main/installer-arm64/current/images/netboot/mini.iso
       ;;
     netbsd-9 )
-      SHA256=81db6afa511d4ec32883379525019e2762535ecac85c044262e40525bc1a47d7
       GZ_IMG_URL=http://nycdn.netbsd.org/pub/NetBSD-daily/netbsd-9/latest/evbarm-aarch64/binary/gzimg/arm64.img.gz
       CPU=cortex-a53
       MACHINE=virt
       ;;
     alpine-3 )
-      SHA256=3ec5287de9427d2ff5577dc1dfa30649bdad8943a06115e466cdac39ca6787dd
       ISO_URL=http://dl-cdn.alpinelinux.org/alpine/v3.12/releases/aarch64/alpine-standard-3.12.0-aarch64.iso
       ;;
   esac
-}
 
-copy_arm64_firmware () {
   # Ensure firmware exists
   EFI="${CACHE}/edk2-aarch64-code.fd"
   if [ ! -f "${EFI}" ]; then
@@ -207,8 +213,6 @@ copy_arm64_firmware () {
       * )
         echo "Fetching firmware image..."
         curl https://raw.githubusercontent.com/qemu/qemu/3284aa128153750f14a61e8a96fd085e6f2999b6/pc-bios/edk2-aarch64-code.fd.bz2 -Lf > "${CACHE}/edk2-aarch64-code.fd.bz2"
-        SUM=`sha256 "${CACHE}/edk2-aarch64-code.fd.bz2" | cut -f1 -d " "`
-        test "${SUM}" == "f94a5824e6c48c9d241ac1ac003d4e87e573de78af2b5c493e94d490fec665a1" || fail "edk2-aarch64-code.fd.bz2 checksum did not match"
         cd ${CACHE}
         bunzip2 edk2-aarch64-code.fd.bz2
         ;;
@@ -220,7 +224,7 @@ copy_arm64_firmware () {
   rm "${EFI}"
 }
 
-write_run_sh () {
+write_arm64_run_sh () {
   touch "${BUILD}/run.sh"
   chmod +x "${BUILD}/run.sh"
   cat <<EOF > "${BUILD}/run.sh"
@@ -319,29 +323,6 @@ usage () {
   echo "  list                    Print supported build targets and exit."
   echo "  help                    Print this help message and exit."
   echo
-}
-
-validate_guest () {
-  case "${OS}" in
-    netbsd-9|ubuntu-bionic|alpine-3 )
-      ;;
-    * )
-      echo
-      echo "Unsupported operating system ${OS}"
-      supported_guests
-      exit 1
-      ;;
-  esac
-  case "${ARCH}" in
-    arm64 )
-      ;;
-    * )
-      echo
-      echo "Unsupported architecture ${ARCH}"
-      supported_guests
-      exit 1
-      ;;
-  esac
 }
 
 supported_guests () {
