@@ -47,7 +47,7 @@ qemundo install --os alpine-3 --arch arm64
 Usage: qemundo COMMAND [OPTIONS]
 
   install [path]          Create a new virtual machine at path (default: <os>-<arch>)..
-    -o/--os <os>          Install this operating system (default: netbsd-9)
+    -o/--os <os>          Install this operating system (default: alpine-3)
     -a/--arch <arch>      Emulate this architecture (default: arm64)
     -s/--size <size>      The size of the disk image (default: 5G)
     -m/--memory <memory>  The amount of memory to allocate (default: 512M)

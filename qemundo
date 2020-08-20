@@ -5,7 +5,7 @@
 # Usage: qemundo COMMAND [OPTIONS]
 #
 #   install [path]          Create a new virtual machine at path (default: <os>-<arch>)..
-#     -o/--os <os>          Install this operating system (default: netbsd-9)
+#     -o/--os <os>          Install this operating system (default: ubuntu-bionic)
 #     -a/--arch <arch>      Emulate this architecture (default: arm64)
 #     -s/--size <size>      The size of the disk image (default: 5G)
 #     -m/--memory <memory>  The amount of memory to allocate (default: 512M)
@@ -42,46 +42,21 @@ DIR="$( cd "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
 HOST=`uname -a`
 CACHE="${HOME}/.cache/qemundo"
 
-DEFAULT_OS=netbsd-9
+DEFAULT_OS=ubuntu-bionic
 DEFAULT_ARCH=arm64
 DEFAULT_SIZE=5G
 DEFAULT_MEMORY=512M
 DEFAULT_CPUS=`nproc`
 
 install () {
-  prepare_install
+  CACHED_ISO="${CACHE}/${OS}-${ARCH}.iso"
+  CACHED_DISK="${CACHE}/${OS}-${ARCH}.qcow2"
+  DISK="${BUILD}/disk.qcow2"
+  CACHED_FIRMWARE="${CACHE}/${ARCH}-firmware.qcow2"
+  FIRMWARE="${BUILD}/firmware.qcow2"
 
-  case $ARCH in
-    arm64 )
-      prepare_arm64
-      build_image
-      write_arm64_run_sh
-      ;;
-  esac
-
-  echo
-  echo "Created VM at ${BUILD}"
-  echo "Run this VM with:"
-  echo
-  echo "sh \"${BUILD}/run.sh\""
-  echo
-}
-
-prepare_install () {
-  # Validate guest
-  case "${OS}" in
-    netbsd-9|ubuntu-bionic|alpine-3 )
-      ;;
-    * )
-      echo
-      echo "Unsupported operating system ${OS}"
-      supported_guests
-      exit 1
-      ;;
-  esac
   case "${ARCH}" in
-    arm64 )
-      ;;
+    arm64 ) prepare_arm64 ;;
     * )
       echo
       echo "Unsupported architecture ${ARCH}"
@@ -90,10 +65,21 @@ prepare_install () {
       ;;
   esac
 
+  case "${OS}" in
+    ubuntu-bionic|alpine-3|netbsd-9 )
+      ;;
+    * )
+      echo
+      echo "Unsupported operating system ${OS}"
+      supported_guests
+      exit 1
+      ;;
+  esac
+
   if [ -d "${BUILD}" ]; then
     read -p "Existing machine in ${BUILD} will be overwritten. Are you sure? [y/N] " -n 1 -r
     echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    if [[ ! "${REPLY}" =~ ^[Yy]$ ]]; then
       fail "Cancelled by user."
     fi
     rm -R "${BUILD}"
@@ -104,8 +90,65 @@ prepare_install () {
   mkdir -p "${BUILD}"
   mkdir -p "${CACHE}"
 
-  NAME="$(basename "${BUILD}")"
-  echo "Creating virtual machine ${NAME}"
+  echo "Creating virtual machine at ${BUILD}"
+
+  install_qemu
+  copy_firmware
+  build_image
+  write_run_sh
+
+  echo
+  echo "Created VM at ${BUILD}"
+  echo "Run this VM with:"
+  echo
+  echo "sh \"${BUILD}/run.sh\""
+  echo
+}
+
+install_qemu () {
+  # Ensure qemu is installed
+  if ! command -v "${QEMU}" &> /dev/null
+  then
+    case $HOST in
+      *ubuntu* | *debian* )
+        apt-get update
+        # TODO - specific qemu-system-* packages for other architectures
+        apt-get install qemu-system-arm qemu-utils
+        ;;
+      *Darwin* )
+        if command -v brew &> /dev/null
+        then
+          brew install qemu coreutils
+        fi
+        ;;
+    esac
+    if ! command -v "${QEMU}" &> /dev/null
+    then
+      fail "${QEMU} not found. Install qemu."
+    fi
+  fi
+}
+
+copy_firmware () {
+  if [ ! -f "${CACHED_FIRMWARE}" ]; then
+    if [ "${FIRMWARE_BZ2_URL}" != "" ]; then
+      echo "Fetching firmware image ${FIRMWARE_BZ2_URL}..."
+      cd ${CACHE}
+      curl "${FIRMWARE_BZ2_URL}" -Lf > "${ARCH}-firmware.fd.bz2"
+      bunzip2 "${ARCH}-firmware.fd.bz2"
+      dd if=/dev/zero of="${ARCH}-firmware.img" bs=1048576 count=64 >/dev/null 2>&1
+      dd if="${ARCH}-firmware.fd" of="${ARCH}-firmware.img" conv=notrunc >/dev/null 2>&1
+      qemu-img convert -f raw -O qcow2 "${ARCH}-firmware.img" "${CACHED_FIRMWARE}"
+      rm "${ARCH}-firmware.fd"
+      rm "${ARCH}-firmware.img"
+    fi
+  fi
+  if [ -f "${CACHED_FIRMWARE}" ]; then
+    echo "Copying firmware ${CACHED_FIRMWARE}"
+    cp "${CACHED_FIRMWARE}" "${FIRMWARE}"
+  else
+    fail "Bug in qemunod: no firmware"
+  fi
 }
 
 build_image () {
@@ -119,20 +162,20 @@ build_image () {
 }
 
 boot_iso () {
-  ISO="${CACHE}/${OS}-${ARCH}.iso"
-  if [ ! -f "${ISO}" ]; then
-    echo "Fetching ${OS} ISO..."
+  if [ ! -f "${CACHED_ISO}" ]; then
+    echo "Fetching ISO ${ISO_URL}..."
     mkdir -p ~/.cache/qemundo
-    curl "${ISO_URL}" -Lf > "${ISO}"
+    curl "${ISO_URL}" -Lf > "${CACHED_ISO}"
   else
-    echo "Using cached ISO"
+    echo "Using cached ISO ${CACHED_ISO}"
   fi
 
-  echo "Creating blank ${SIZE} disk image..."
-  qemu-img create -f raw "${BUILD}/${OS}-${ARCH}.img" "${SIZE}" >/dev/null 2>&1
+  echo "Creating disk image ${DISK} (${SIZE})..."
+  qemu-img create -f qcow2 "${DISK}" "${SIZE}" >/dev/null 2>&1
 
   echo "Booting from ISO..."
-  qemu-system-aarch64 \
+  sleep 5
+  "${QEMU}" \
     -nographic \
     -machine "${MACHINE}" \
     -m "${MEMORY}" \
@@ -140,92 +183,52 @@ boot_iso () {
     -smp "${CPUS}" \
     -netdev user,id=vnet,hostfwd=:127.0.0.1:0-:22 \
     -device virtio-net-pci,netdev=vnet \
-    -drive file="${BUILD}/${OS}-${ARCH}.img,if=none,id=drive0,cache=writeback" \
-    -device virtio-blk,drive=drive0,bootindex=0 \
-    -drive file="${ISO},if=none,id=drive1,cache=writeback" \
-    -device virtio-blk,drive=drive1,bootindex=1 \
-    -drive file="${BUILD}/pflash.img,format=raw,if=pflash"
+    -drive file="${DISK},format=qcow2,if=none,id=drive0,cache=writeback" \
+    -device virtio-blk,drive=drive0,bootindex=1 \
+    -drive file="${CACHED_ISO},format=raw,if=none,id=drive1,cache=writeback" \
+    -device virtio-blk,drive=drive1,bootindex=0 \
+    -drive file="${FIRMWARE},format=qcow2,if=pflash"
 }
 
 copy_gz_img () {
-  GZ_IMG="${CACHE}/${OS}-${ARCH}.img.gz"
-  if [ ! -f "${GZ_IMG}" ]; then
-    echo "Fetching ${OS}-${ARCH} image..."
-    curl "${GZ_IMG_URL}" -Lf > "${GZ_IMG}"
+  if [ ! -f "${CACHED_DISK}" ]; then
+    echo "Fetching image ${GZ_IMG_URL}..."
+    CACHED_RAW="${CACHE}/${OS}-${ARCH}.img"
+    curl "${GZ_IMG_URL}" -Lf > "${CACHE}/${OS}-${ARCH}.img.gz"
+    gunzip --stdout "${GZ_IMG}" > "${CACHED_RAW}"
+    qemu-img convert -f raw -O qcow2 "${CACHED_RAW}" "${CACHED_DISK}"
+    rm "${CACHED_RAW}"
+    echo "Cached image ${CACHED_DISK}"
   else
-    echo "Using cached ${OS}-${ARCH} image"
+    echo "Using cached image ${CACHED_DISK}"
   fi
-
-  IMG="${BUILD}/${OS}-${ARCH}.img"
-  gunzip --stdout "${GZ_IMG}" > "${IMG}"
-
   echo "Resizing image to ${SIZE}..."
-  qemu-img resize -f raw "${IMG}" "${SIZE}"
+  cp "${CACHED_DISK}" "${DISK}"
+  qemu-img resize -f qcow2 "${DISK}" "${SIZE}"
 }
 
 prepare_arm64 () {
-  # Ensure qemu-system-aarch64 is installed
-  if ! command -v qemu-system-aarch64 &> /dev/null
-  then
-    case $HOST in
-      *ubuntu* | *debian* )
-        apt-get update
-        apt-get install qemu-system-arm qemu-efi-aarch64 qemu-utils
-        ;;
-      *Darwin* )
-        if command -v brew &> /dev/null
-        then
-          brew install qemu coreutils
-        fi
-        ;;
-    esac
-    if ! command -v qemu-system-aarch64 &> /dev/null
-    then
-      fail "qemu-system-aarch64 not found. Install qemu."
-    fi
-  fi
-
+  QEMU=qemu-system-aarch64
   CPU=max
   MACHINE=virt,gic-version=max
+  FIRMWARE_BZ2_URL=https://raw.githubusercontent.com/qemu/qemu/3284aa128153750f14a61e8a96fd085e6f2999b6/pc-bios/edk2-aarch64-code.fd.bz2
+
   case $OS in
     ubuntu-bionic )
       ISO_URL=http://ports.ubuntu.com/ubuntu-ports/dists/bionic-updates/main/installer-arm64/current/images/netboot/mini.iso
+      ;;
+    alpine-3 )
+      ISO_URL=http://dl-cdn.alpinelinux.org/alpine/v3.12/releases/aarch64/alpine-standard-3.12.0-aarch64.iso
       ;;
     netbsd-9 )
       GZ_IMG_URL=http://nycdn.netbsd.org/pub/NetBSD-daily/netbsd-9/latest/evbarm-aarch64/binary/gzimg/arm64.img.gz
       CPU=cortex-a53
       MACHINE=virt
       ;;
-    alpine-3 )
-      ISO_URL=http://dl-cdn.alpinelinux.org/alpine/v3.12/releases/aarch64/alpine-standard-3.12.0-aarch64.iso
-      ;;
   esac
-
-  # Ensure firmware exists
-  EFI="${CACHE}/edk2-aarch64-code.fd"
-  if [ ! -f "${EFI}" ]; then
-    case $HOST in
-      *ubuntu* | *debian* )
-        cp /usr/share/qemu-efi-aarch64/QEMU_EFI.fd "${EFI}"
-        ;;
-      *Darwin* )
-        cp /usr/local/opt/qemu/share/qemu/edk2-aarch64-code.fd "${EFI}"
-        ;;
-      * )
-        echo "Fetching firmware image..."
-        curl https://raw.githubusercontent.com/qemu/qemu/3284aa128153750f14a61e8a96fd085e6f2999b6/pc-bios/edk2-aarch64-code.fd.bz2 -Lf > "${CACHE}/edk2-aarch64-code.fd.bz2"
-        cd ${CACHE}
-        bunzip2 edk2-aarch64-code.fd.bz2
-        ;;
-    esac
-  fi
-  echo "Copying firmware image..."
-  dd if=/dev/zero of="${BUILD}/pflash.img" bs=1048576 count=64 >/dev/null 2>&1
-  dd if="${EFI}" of="${BUILD}/pflash.img" conv=notrunc >/dev/null 2>&1
-  rm "${EFI}"
 }
 
-write_arm64_run_sh () {
+write_run_sh () {
   touch "${BUILD}/run.sh"
   chmod +x "${BUILD}/run.sh"
   cat <<EOF > "${BUILD}/run.sh"
@@ -233,24 +236,56 @@ write_arm64_run_sh () {
 
 DIR="\$( cd "\$(dirname "\$0")" >/dev/null 2>&1 ; pwd -P )"
 
+MACHINE="${MACHINE}"
 CPU="${CPU}"
 CPUS="${CPUS}"
 MEMORY="${MEMORY}"
-IMG="\${DIR}/${OS}-${ARCH}.img"
-PFLASH="\${DIR}/pflash.img"
+DISK="\${DIR}/disk.qcow2"
+FIRMWARE="\${DIR}/firmware.qcow2"
 
-qemu-system-aarch64 \\
+${QEMU} \\
   -nographic \\
-  -machine ${MACHINE} \\
+  -machine "\${MACHINE}" \\
   -m "\${MEMORY}" \\
   -cpu "\${CPU}" \\
   -smp "\${CPUS}" \\
   -netdev user,id=vnet,hostfwd=:127.0.0.1:0-:22 \\
   -device virtio-net-pci,netdev=vnet \\
-  -drive file="\${IMG},if=none,id=drive0,cache=writeback" \\
+  -drive file="\${DISK},format=qcow2,if=none,id=drive0,cache=writeback" \\
   -device virtio-blk,drive=drive0,bootindex=0 \\
-  -drive file="\${PFLASH},format=raw,if=pflash"
+  -drive file="\${FIRMWARE},format=qcow2,if=pflash"
 EOF
+}
+
+usage () {
+  echo
+  echo "Usage: ${ME} COMMAND [OPTIONS]"
+  echo
+  echo "  install                 Create a new virtual machine"
+  echo "    [path]                Create the VM at this path (default: ./<os>-<arch>)"
+  echo "    -o/--os <os>          Install this operating system (default: ${DEFAULT_OS})"
+  echo "    -a/--arch <arch>      Emulate this architecture (default: ${DEFAULT_ARCH})"
+  echo "    -s/--size <size>      The size of the disk image (default: ${DEFAULT_SIZE})"
+  echo "    -m/--memory <memory>  The amount of memory to allocate (default: ${DEFAULT_MEMORY})"
+  echo "    -p/--cpus <count>     The number of processors (default: ${DEFAULT_CPUS})"
+  echo
+  echo "  clean                   Remove all cached ISOs and images"
+  echo "  list                    Print supported build targets and exit"
+  echo "  help                    Print this help message and exit"
+  echo
+}
+
+supported_guests () {
+  echo
+  echo "Supported guests:"
+  ech
+  echo "  --os ubuntu-bionic   --arch arm64 # Ubuntu Bionic"
+  echo "  --os alpine-3        --arch arm64 # Alpine Linux 3"
+  echo "  --os netbsd-9        --arch arm64 # NetBSD 9"
+  echo
+  echo "Pull requests for additional guests are welcome."
+  echo "https://github.com/elijahr/qemundo"
+  echo
 }
 
 parse_install_args () {
@@ -307,36 +342,6 @@ parse_install_args () {
   else
     BUILD=`realpath "${POSITIONAL[0]}"`
   fi
-}
-
-usage () {
-  echo
-  echo "Usage: ${ME} COMMAND [OPTIONS]"
-  echo
-  echo "  install [path]          Create a new virtual machine at path (default: <os>-<arch>).."
-  echo "    -o/--os <os>          Install this operating system (default: ${DEFAULT_OS})"
-  echo "    -a/--arch <arch>      Emulate this architecture (default: ${DEFAULT_ARCH})"
-  echo "    -s/--size <size>      The size of the disk image (default: ${DEFAULT_SIZE})"
-  echo "    -m/--memory <memory>  The amount of memory to allocate (default: ${DEFAULT_MEMORY})"
-  echo "    -p/--cpus <count>     The number of processors (default: ${DEFAULT_CPUS})"
-  echo
-  echo "  clean                   Remove all cached ISOs and images"
-  echo "  list                    Print supported build targets and exit"
-  echo "  help                    Print this help message and exit"
-  echo
-}
-
-supported_guests () {
-  echo
-  echo "Supported guests:"
-  echo
-  echo "  --os netbsd-9        --arch arm64"
-  echo "  --os ubuntu-bionic   --arch arm64"
-  echo "  --os alpine-3        --arch arm64"
-  echo
-  echo "Pull requests for additional guests are welcome."
-  echo "https://github.com/elijahr/qemundo"
-  echo
 }
 
 main () {
